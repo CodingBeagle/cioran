@@ -48,13 +48,12 @@ set(SDL_DLL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vendors/sdl)
 
 # Add the DLL directory to the runtime search path
 target_link_directories(${PROJECT_NAME} PRIVATE ${SDL_DLL_DIR})
-# Assuming SDL3-x64-debug.lib is the import library corresponding to SDL3-x64-debug.dll
 
 # Link against the SDL3 import library
-target_link_libraries(${PROJECT_NAME} PRIVATE SDL3-x64-debug)
+target_link_libraries(${PROJECT_NAME} PRIVATE SDL3.lib)
 
 # Add a post-build command to copy the SDL3 DLL to the output directory
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${SDL_DLL_DIR}/SDL3-x64-debug.dll"
+    "${SDL_DLL_DIR}/SDL3.dll"
     $<TARGET_FILE_DIR:${PROJECT_NAME}>)
