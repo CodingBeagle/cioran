@@ -16,6 +16,9 @@ VkSemaphoreCreateInfo semaphore_create_info(VkSemaphoreCreateFlags flags);
 VkCommandBufferBeginInfo command_buffer_begin_info(VkCommandBufferUsageFlags flags);
 VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspectMask);
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout);
+VkSemaphoreSubmitInfo semaphore_submit_info(VkPipelineStageFlags2 stageMask, VkSemaphore semaphore);
+VkCommandBufferSubmitInfo command_buffer_submit_info(VkCommandBuffer cmd);
+VkSubmitInfo2 submit_info(VkCommandBufferSubmitInfo* cmd, VkSemaphoreSubmitInfo* signalSemaphoreInfo, VkSemaphoreSubmitInfo* waitSemaphoreInfo);
 
 struct FrameData {
     VkCommandPool command_pool;
@@ -127,6 +130,7 @@ int main(int argc, char **argv) {
         .set_desired_format(VkSurfaceFormatKHR { .format = vk_swapchain_format, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR })
         .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
         .set_desired_extent(window_width, window_height)
+        .set_image_usage_flags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
         .build()
         .value();
 
@@ -294,6 +298,44 @@ int main(int argc, char **argv) {
             std::cout << "Failed to end command buffer" << std::endl;
             terminate();
         }
+
+        // Prepare submission to the queue
+        // We want to wait on the present semaphore, as that semaphore is signaled when the swapchain is ready
+        // We will signal the render semaphore, to signal that rendering is finished
+        VkCommandBufferSubmitInfo cmdSubmitInfo = command_buffer_submit_info(cmd);
+
+        VkSemaphoreSubmitInfo waitInfo = semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR, get_current_frame().swapchain_semaphore);
+        VkSemaphoreSubmitInfo signalInfo = semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, get_current_frame().render_semaphore);
+
+        VkSubmitInfo2 submit = submit_info(&cmdSubmitInfo, &signalInfo, &waitInfo);
+
+        // Submit the command buffer to the queue and execute it
+        // render fence will now block until the graphic commands finish execution
+        if (vkQueueSubmit2(graphics_queue, 1, &submit, get_current_frame().render_fence) != VK_SUCCESS) {
+            std::cout << "Failed to submit to queue" << std::endl;
+            terminate();
+        }
+
+        // Prepare present
+        // This will put the image we just rendered to into the visible window
+        // We want to wait on the render semaphore for that,
+        // as its necessary that drawing commands have finished before the image is displayed to the user
+        VkPresentInfoKHR presentInfo {};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = &vk_swapchain;
+
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = &get_current_frame().render_semaphore;
+
+        presentInfo.pImageIndices = &swapchain_image_index;
+
+        if (vkQueuePresentKHR(graphics_queue, &presentInfo) != VK_SUCCESS) {
+            std::cout << "Failed to present image" << std::endl;
+            terminate();
+        }
+
+        frame_number++;
     }
 
     // Make sure that the GPU has stopped doing its things
@@ -338,6 +380,31 @@ VkSemaphoreSubmitInfo semaphore_submit_info(VkPipelineStageFlags2 stageMask, VkS
     semaphoreSubmitInfo.value = 1;
     
     return semaphoreSubmitInfo;
+}
+
+VkCommandBufferSubmitInfo command_buffer_submit_info(VkCommandBuffer cmd) {
+    VkCommandBufferSubmitInfo cmdSubmitInfo {};
+    cmdSubmitInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    cmdSubmitInfo.commandBuffer = cmd;
+    cmdSubmitInfo.deviceMask = 0;
+
+    return cmdSubmitInfo;
+}
+
+VkSubmitInfo2 submit_info(VkCommandBufferSubmitInfo* cmd, VkSemaphoreSubmitInfo* signalSemaphoreInfo, VkSemaphoreSubmitInfo* waitSemaphoreInfo) {
+    VkSubmitInfo2 submitInfo {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+
+    submitInfo.waitSemaphoreInfoCount = waitSemaphoreInfo == nullptr ? 0 : 1;
+    submitInfo.pWaitSemaphoreInfos = waitSemaphoreInfo;
+
+    submitInfo.signalSemaphoreInfoCount = signalSemaphoreInfo == nullptr ? 0 : 1;
+    submitInfo.pSignalSemaphoreInfos = signalSemaphoreInfo;
+
+    submitInfo.commandBufferInfoCount = cmd == nullptr ? 0 : 1;
+    submitInfo.pCommandBufferInfos = cmd;
+
+    return submitInfo;
 }
 
 VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspectMask) {
