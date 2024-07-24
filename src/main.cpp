@@ -10,6 +10,9 @@
 #include <SDL3/SDL_main.h>
 #include <SDL3/SDL_vulkan.h>
 
+// Cioran
+#include "cioran-vulkan.h"
+
 // Function prototypes
 VkFenceCreateInfo fence_create_info(VkFenceCreateFlags flags);
 VkSemaphoreCreateInfo semaphore_create_info(VkSemaphoreCreateFlags flags);
@@ -76,111 +79,44 @@ int main(int argc, char **argv) {
     }
 
     // Initialize Vulkan
-    vkb::InstanceBuilder vk_instance_builder;
+    auto vulkan_init = cioran::initialize_vulkan();
+    vk_instance = vulkan_init.instance;
+    vk_debug_messenger = vulkan_init.debug_messenger;
 
-    auto inst_ret = vk_instance_builder.set_app_name("Cioran")
-        .request_validation_layers(true)
-        .require_api_version(1, 1, 0)
-        .use_default_debug_messenger()
-        .require_api_version(1, 3, 0)
-        .build();
+    // Get a window surface that we can render to from the vulkan swapchain
+    vk_surface = cioran::get_window_surface(window, vk_instance);
 
-    vkb::Instance vkb_inst = inst_ret.value();
-
-    vk_instance = vkb_inst.instance;
-    vk_debug_messenger = vkb_inst.debug_messenger;
-
-    if (SDL_Vulkan_CreateSurface(window, vk_instance, nullptr, &vk_surface) != 0) {
-        std::cout << "Failed to create Vulkan surface: " << SDL_GetError() << std::endl;
-        terminate();
-    }
-
-    VkPhysicalDeviceVulkan13Features vk13_features = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-    vk13_features.dynamicRendering = true;
-    vk13_features.synchronization2 = true;
-
-    VkPhysicalDeviceVulkan12Features vk12_features = { .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
-    vk12_features.bufferDeviceAddress = true;
-    vk12_features.descriptorIndexing = true;
-
-    // Use vkbootstrap to select a GPU
-    // We want a GPU that can write to the SDL surface and supports Vulkan 1.3 with the correct features
-    vkb::PhysicalDeviceSelector selector { vkb_inst };
-    vkb::PhysicalDevice physical_device = selector
-        .set_minimum_version(1, 3)
-        .set_required_features_13(vk13_features)
-        .set_required_features_12(vk12_features)
-        .set_surface(vk_surface)
-        .select()
-        .value();
+    // Get the physical device that we will use for rendering
+    auto physical_device = cioran::get_physical_device(vulkan_init, vk_surface);
 
     // Create the final Vulkan device
     vkb::DeviceBuilder device_builder { physical_device };
     vkb::Device vkb_device = device_builder.build().value();
-
     vk_device = vkb_device.device;
     vk_physical_device = physical_device.physical_device;
 
     // Create the swapchain
-    vkb::SwapchainBuilder swapchain_builder { physical_device, vk_device, vk_surface };
-
     vk_swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
+    auto swapchain = cioran::create_swapchain(physical_device, vk_device, vk_surface, window_width, window_height, vk_swapchain_format);
 
-    vkb::Swapchain vkSwapChain = swapchain_builder
-        .set_desired_format(VkSurfaceFormatKHR { .format = vk_swapchain_format, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR })
-        .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
-        .set_desired_extent(window_width, window_height)
-        .set_image_usage_flags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-        .build()
-        .value();
-
-    vk_swapchain_extent = vkSwapChain.extent;
-    vk_swapchain = vkSwapChain.swapchain;
-    vk_swapchain_images = vkSwapChain.get_images().value();
-    vk_swapchain_image_views = vkSwapChain.get_image_views().value();
+    vk_swapchain_extent = swapchain.extent;
+    vk_swapchain = swapchain.swapchain;
+    vk_swapchain_images = swapchain.get_images().value();
+    vk_swapchain_image_views = swapchain.get_image_views().value();
 
     // Get graphics queue
     graphics_queue = vkb_device.get_queue(vkb::QueueType::graphics).value();
     graphics_queue_family = vkb_device.get_queue_index(vkb::QueueType::graphics).value();
 
     // Create command structures
-
-    // Create the command pool
-    // A command pool can be seen as an allocator for command buffers.
-    VkCommandPoolCreateInfo commandPoolInfo {};
-    commandPoolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    // We indicate that we expect to be able to reset individual command buffers
-    // made from this pool.
-    commandPoolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    commandPoolInfo.queueFamilyIndex = graphics_queue_family;
-
     for (int i = 0; i < FRAME_OVERLAP; i++) {
         // Create a command pool for each frame
-        if (vkCreateCommandPool(
-            vk_device,
-            &commandPoolInfo,
-            nullptr,
-            &frames[i].command_pool) != VK_SUCCESS) 
-        {
-            std::cout << "Failed to create command pool" << std::endl;
-            terminate();
-        }
+        auto command_pool = cioran::create_command_pool(vk_device, graphics_queue_family);
+        frames[i].command_pool = command_pool;
 
         // Allocate the default command buffer that we will use for rendering
-        VkCommandBufferAllocateInfo commandBufferAllocInfo {};
-        commandBufferAllocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        commandBufferAllocInfo.commandPool = frames[i].command_pool;
-        commandBufferAllocInfo.commandBufferCount = 1;
-        commandBufferAllocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-
-        if (vkAllocateCommandBuffers(
-            vk_device,
-            &commandBufferAllocInfo,
-            &frames[i].command_buffer) != VK_SUCCESS) 
-        {
-            std::cout << "Failed to allocate command buffer" << std::endl;
-            terminate();
-        }
+        auto command_buffer = cioran::create_command_buffer(vk_device, command_pool);
+        frames[i].command_buffer = command_buffer;
     }
 
     // Initialize sync structures
@@ -235,9 +171,11 @@ int main(int argc, char **argv) {
             terminate();
         }
 
-        // Request image from the swapchain
-        // vkAcquireNextImageKHR will block the thread with a maximum for the timeout set
-        // in the case that no images are available for use.
+        // Request presentable image from the swapchain
+        // vkAcquireNextImageKHR will block the thread with a maximum for the timeout set in the case that no images are available for use.
+        // The semaphore is used to singal when the presentation engine is finished reading from the image.
+        // This is because when you aquire the image, the presentation engine might still be reading from it.
+        // This semaphore has to be used in the command buffer to make sure nothing tampers with the memory before its signalled.
         uint32_t swapchain_image_index;
         if (vkAcquireNextImageKHR(
             vk_device,
@@ -304,13 +242,23 @@ int main(int argc, char **argv) {
         // We will signal the render semaphore, to signal that rendering is finished
         VkCommandBufferSubmitInfo cmdSubmitInfo = command_buffer_submit_info(cmd);
 
-        VkSemaphoreSubmitInfo waitInfo = semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR, get_current_frame().swapchain_semaphore);
-        VkSemaphoreSubmitInfo signalInfo = semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, get_current_frame().render_semaphore);
+        // The wait_swapchain_semaphore will be provided as a wait semaphore to the submit command.
+        // In this case, it means that all commands BEFORE VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR stage
+        // is allowed to execute, but the pipeline will be stalled at this stage until the semaphore is signalled.
+        // VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR == The stage where, besides other things, final color output is written.
+        // In this case, we need to make sure that the swapchain is done reading from the image data before we write new data to it.
+        VkSemaphoreSubmitInfo wait_swapchain_semaphore = semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR, get_current_frame().swapchain_semaphore);
 
-        VkSubmitInfo2 submit = submit_info(&cmdSubmitInfo, &signalInfo, &waitInfo);
+        // Here, we specify that once all graphic pipeline stages are done, we singal this semaphore.
+        VkSemaphoreSubmitInfo signal_render_semaphore = semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, get_current_frame().render_semaphore);
+
+        VkSubmitInfo2 submit = submit_info(&cmdSubmitInfo, &signal_render_semaphore, &wait_swapchain_semaphore);
 
         // Submit the command buffer to the queue and execute it
         // render fence will now block until the graphic commands finish execution
+        // The fence will be signaled once all submitted command buffers have completed execution.
+        // We use this fence in the beginning of the render loop to make sure the pipeline has completed rendering before we
+        // render a new frame.
         if (vkQueueSubmit2(graphics_queue, 1, &submit, get_current_frame().render_fence) != VK_SUCCESS) {
             std::cout << "Failed to submit to queue" << std::endl;
             terminate();
@@ -345,6 +293,11 @@ int main(int argc, char **argv) {
     // Destroying the pools will also destroy the command buffers allocated from them
     for (int i = 0; i < FRAME_OVERLAP; i++) {
         vkDestroyCommandPool(vk_device, frames[i].command_pool, nullptr);
+
+        // Destroy sync objects
+        vkDestroyFence(vk_device, frames[i].render_fence, nullptr);
+        vkDestroySemaphore(vk_device, frames[i].swapchain_semaphore, nullptr);
+        vkDestroySemaphore(vk_device, frames[i].render_semaphore, nullptr);
     }
 
     // Destroy swapchain resources
@@ -419,40 +372,30 @@ VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspectMask) {
 }
 
 void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentLayout, VkImageLayout newLayout) {
-    // Pipeline barriers are synchronization primitives that are used to control the ordering
-    // of memory operations performed by the GPU.
-    // They are recorded into command buffers and executed when the command buffer is submitted
-    // to a queue.
-    // They ensure that certain operations complete before others begin, which is a way to enforce
-    // dependencies between different stages of a graphics or compute pipeline.
+    // VkImageMemoryBarrier is a type of memory barrier.
+    // It is specialized in handling a layout transition between stage and memory access dependencies.
+    // A memory barrier can ensure correct ordering of memory operations between different stages in the graphics pipeline,
+    // and even between different command buffers.
 
-    // Best way I've been able to think about them so far is that image barriers describe a two-way relationship.
-    // You need to specify the source conditions which the barrier will wait for,
-    // and then the destination conditions, which are the stages and operations that can then be performed.
-    // By having both source conditions and destination conditions, you can be very precise in describing what to wait for, and what
-    // Is then allowed to continue once those conditions are met.
+    // Memory barriers have the following important components:
+    // - Source Stage Mask: The pipeline stages that must be complete before the barrier.
+    // - Source Access Mask: The types of memory access that must be complete within the source stage mask before the barrier.
+    // - Destination Stage Mask: Specifies the pipeline stages that must wait for the barrier.
+    // - Destination Access Mask: Specifies the types of memory access within the destination stage that must wait for the barrier.
 
+    // The VkImageMemoryBarrier additionally has an old and new layout transition, which will happen
+    // after the source masks, but before the destination masks.
     VkImageMemoryBarrier2 imageBarrier {};
     imageBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
 
-    // The source stage mask specifies the pipeline stages that must be complete before the barrier begins.
-    // VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT means that all stages (compute, transfer, graphics) must be completed before the barrier.
-    // It is a more conservative type of synchronization that can potentially impact performance. 
+    // VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT = We wait for all commands in all stages to complete.
+    // VK_ACCESS_2_MEMORY_WRITE_BIT = All memory write commands within all stages must be complete
     imageBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-
-    // Source stage access determines the types of memory access that need to be completed before the barrier.
-    // While srcStageMask defines WHEN synchronization should occur, srcAccessMask defines WHAT needs to be synchronized.
-    // It allows you to be more precise in synchronization control.
-    // VK_ACCESS_2_MEMORY_WRITE_BIT means all write accesses to memory must be completed before the barrier, and is a broad scope.
     imageBarrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
 
-    // Setting destination stage mask to VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT means that all stages can be executed after the source conditions are met.
+    // VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT = All commands for all stages must wait for sources + transition to complete
+    // And both read and write operations of all commands in all stages must wait for sources + to complete
     imageBarrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-
-    // Setting destination access mask to VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT means
-    // that both memory write and memory read operations are allowed to proceed.
-    // Practically, by a combination of VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT and these flags, we say that
-    // any stage in the pipeline can perform any kind of read and write operation after the source conditions are met.
     imageBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
 
     // Transition the memory layout from the current layout to a new layout
