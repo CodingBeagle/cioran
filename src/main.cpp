@@ -5,6 +5,10 @@
 #include <vulkan/vulkan.h>
 #include "vkbootstrap/VkBootstrap.h"
 
+// VMA
+#define VMA_IMPLEMENTATION
+#include "vk_mem_alloc.h"
+
 // SDL
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -29,6 +33,7 @@ struct FrameData {
     VkSemaphore swapchain_semaphore;
     VkSemaphore render_semaphore;
     VkFence render_fence;
+    cioran::VkDeletionQueue deletion_queue;
 };
 
 VkInstance vk_instance;
@@ -54,6 +59,13 @@ FrameData frames[FRAME_OVERLAP];
 FrameData& get_current_frame() { 
     return frames[frame_number % FRAME_OVERLAP];
 };
+
+cioran::VkDeletionQueue main_deletion_queue;
+
+VmaAllocator vma_allocator;
+
+cioran::AllocatedImage allocated_image;
+VkExtent2D draw_extent;
 
 int window_height = 600;
 int window_width = 800;
@@ -144,6 +156,18 @@ int main(int argc, char **argv) {
         }
     }
 
+    // Initialize VMA
+    VmaAllocatorCreateInfo allocatorInfo {};
+    allocatorInfo.physicalDevice = vk_physical_device;
+    allocatorInfo.device = vk_device;
+    allocatorInfo.instance = vk_instance;
+    allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    vmaCreateAllocator(&allocatorInfo, &vma_allocator);
+
+    main_deletion_queue.push_function([=]() {
+        vmaDestroyAllocator(vma_allocator);
+    });
+
     bool running = true;
     while (running) {
         // SDL_PollEvent is the favored way of receving system events since it can be done from the main loop and does not suspend the main loop
@@ -163,6 +187,8 @@ int main(int argc, char **argv) {
             std::cout << "Failed to wait for fence" << std::endl;
             terminate();
         }
+
+        get_current_frame().deletion_queue.flush();
 
         // Reset the fence.
         // Fences have to be reset between uses.
@@ -298,7 +324,11 @@ int main(int argc, char **argv) {
         vkDestroyFence(vk_device, frames[i].render_fence, nullptr);
         vkDestroySemaphore(vk_device, frames[i].swapchain_semaphore, nullptr);
         vkDestroySemaphore(vk_device, frames[i].render_semaphore, nullptr);
+
+        frames[i].deletion_queue.flush();
     }
+
+    main_deletion_queue.flush();
 
     // Destroy swapchain resources
     vkDestroySwapchainKHR(vk_device, vk_swapchain, nullptr);
