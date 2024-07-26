@@ -24,7 +24,7 @@ project(cioran LANGUAGES CXX)
 
 # Add executable target
 # A target corresponds to an executable or a library.
-add_executable(${PROJECT_NAME} src/main.cpp src/cioran.cpp headers/vkbootstrap/VkBootstrap.cpp)
+add_executable(${PROJECT_NAME} src/main.cpp src/cioran.cpp src/cioran-images.cpp headers/vkbootstrap/VkBootstrap.cpp)
 
 # Add include directories from "headers" directory
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/headers)

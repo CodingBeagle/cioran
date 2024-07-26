@@ -163,6 +163,7 @@ int main(int argc, char **argv) {
     
     // For the draw image, we want to allocate it from GPU local memory
     VmaAllocationCreateInfo rimg_alloc_info = {};
+    // Specify that this is a texture that will never be accessed by the CPU.
     rimg_alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
     rimg_alloc_info.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
@@ -182,7 +183,7 @@ int main(int argc, char **argv) {
         terminate();
     }
 
-    // Add to deletion queue
+    // Add image resources to deletion queue
     main_deletion_queue.push_function([=]() {
         vkDestroyImageView(vk_device, draw_image.image_view, nullptr);
         vmaDestroyImage(vma_allocator, draw_image.image, draw_image.allocation);
