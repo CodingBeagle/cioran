@@ -73,9 +73,14 @@ namespace cioran {
     {
         VkImageCreateInfo image_create_info {};
         image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+
+        // We want a 2D image
         image_create_info.imageType = VK_IMAGE_TYPE_2D;
         image_create_info.format = format;
         image_create_info.extent = extent;
+
+        // We don't need any mip levels right now.
+        // Each mip level is an automatically generated downsampled version of the original level.
         image_create_info.mipLevels = 1;
         image_create_info.arrayLayers = 1;
         image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -87,11 +92,22 @@ namespace cioran {
 
     VkImageViewCreateInfo create_image_view_create_info(VkFormat format, VkImage image, VkImageAspectFlags aspect_flags)
     {
+        // Image views defines how an image will be accessed and viewed
         VkImageViewCreateInfo image_view_create_info {};
         image_view_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+
+        // Specify the image on which the view will be created.
         image_view_create_info.image = image;
+
+        // This view will be for a 2D image
         image_view_create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+
+        // Specify the format and type used to interpret the texels of the image
         image_view_create_info.format = format;
+
+        // The subresource specifies the set of mipmap levels and array layers to be accessible to the image view.
+        // The aspect mask is used to specify the aspect(s) of the image to be included
+        // This can be things such as COLOR_BIT, DEPTH_BIT, STENCIL_BIT, etc.
         image_view_create_info.subresourceRange.aspectMask = aspect_flags;
         image_view_create_info.subresourceRange.baseMipLevel = 0;
         image_view_create_info.subresourceRange.levelCount = 1;

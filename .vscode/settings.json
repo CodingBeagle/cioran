@@ -64,6 +64,12 @@
         "xtree": "cpp",
         "xutility": "cpp",
         "deque": "cpp",
-        "functional": "cpp"
+        "functional": "cpp",
+        "cinttypes": "cpp",
+        "condition_variable": "cpp",
+        "list": "cpp",
+        "shared_mutex": "cpp",
+        "unordered_map": "cpp",
+        "xhash": "cpp"
     }
 }

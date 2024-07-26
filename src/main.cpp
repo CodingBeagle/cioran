@@ -26,6 +26,7 @@ void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout currentL
 VkSemaphoreSubmitInfo semaphore_submit_info(VkPipelineStageFlags2 stageMask, VkSemaphore semaphore);
 VkCommandBufferSubmitInfo command_buffer_submit_info(VkCommandBuffer cmd);
 VkSubmitInfo2 submit_info(VkCommandBufferSubmitInfo* cmd, VkSemaphoreSubmitInfo* signalSemaphoreInfo, VkSemaphoreSubmitInfo* waitSemaphoreInfo);
+void vma_log_error(VkResult result);
 
 struct FrameData {
     VkCommandPool command_pool;
@@ -64,7 +65,7 @@ cioran::VkDeletionQueue main_deletion_queue;
 
 VmaAllocator vma_allocator;
 
-cioran::AllocatedImage allocated_image;
+cioran::AllocatedImage draw_image;
 VkExtent2D draw_extent;
 
 int window_height = 600;
@@ -107,6 +108,22 @@ int main(int argc, char **argv) {
     vk_device = vkb_device.device;
     vk_physical_device = physical_device.physical_device;
 
+    // Initialize VMA
+    VmaAllocatorCreateInfo allocatorInfo {};
+    allocatorInfo.physicalDevice = vk_physical_device;
+    allocatorInfo.device = vk_device;
+    allocatorInfo.instance = vk_instance;
+    allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+    auto allocatorCreateResult = vmaCreateAllocator(&allocatorInfo, &vma_allocator);
+    if (allocatorCreateResult != VK_SUCCESS) {
+        vma_log_error(allocatorCreateResult);
+        terminate();
+    }
+
+    main_deletion_queue.push_function([=]() {
+        vmaDestroyAllocator(vma_allocator);
+    });
+
     // Create the swapchain
     vk_swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
     auto swapchain = cioran::create_swapchain(physical_device, vk_device, vk_surface, window_width, window_height, vk_swapchain_format);
@@ -115,6 +132,61 @@ int main(int argc, char **argv) {
     vk_swapchain = swapchain.swapchain;
     vk_swapchain_images = swapchain.get_images().value();
     vk_swapchain_image_views = swapchain.get_image_views().value();
+
+    // Draw image size will match the window
+    VkExtent3D drawImageExtent = {
+        window_width,
+        window_height,
+        1
+    };
+
+    // Hardcoding the draw format to 32 bit float
+    draw_image.image_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    draw_image.image_extent = drawImageExtent;
+
+    // All images and buffers must fill in a UsageFlags with what they will be
+    // used for. This allows the driver to perform optimizations in the background
+    // depending on what that buffer or image is going to do later.
+    VkImageUsageFlags drawImageUsages {};
+    // The image can be used as the source of a transfer command (you can copy from)
+    drawImageUsages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    // The image can be used as the destination of a transfer command (you can copy to)
+    drawImageUsages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    // The image can be used to create a VkImageView suitable for occupying a 
+    // VkDescriptorSet slot of type VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+    drawImageUsages |= VK_IMAGE_USAGE_STORAGE_BIT;
+    // The image can be used as a target for rendering operations.
+    // Specifically, it can be used as a color attachment in a render pass.
+    drawImageUsages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    VkImageCreateInfo rimg_info = cioran::create_image_create_info(draw_image.image_format, drawImageUsages, drawImageExtent);
+    
+    // For the draw image, we want to allocate it from GPU local memory
+    VmaAllocationCreateInfo rimg_alloc_info = {};
+    rimg_alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    rimg_alloc_info.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    // Allocate and create the image
+    auto createImageResult = vmaCreateImage(vma_allocator, &rimg_info, &rimg_alloc_info, &draw_image.image, &draw_image.allocation, nullptr);
+    if (createImageResult != VK_SUCCESS) {
+        
+        vma_log_error(createImageResult);
+        terminate();
+    }
+
+    // Build an image-view for the draw image to use for rendering
+    VkImageViewCreateInfo rview_info = cioran::create_image_view_create_info(draw_image.image_format, draw_image.image, VK_IMAGE_ASPECT_COLOR_BIT);
+
+    if (vkCreateImageView(vk_device, &rview_info, nullptr, &draw_image.image_view) != VK_SUCCESS) {
+        std::cout << "Failed to create image view" << std::endl;
+        terminate();
+    }
+
+    // Add to deletion queue
+    main_deletion_queue.push_function([=]() {
+        vkDestroyImageView(vk_device, draw_image.image_view, nullptr);
+        vmaDestroyImage(vma_allocator, draw_image.image, draw_image.allocation);
+    });
 
     // Get graphics queue
     graphics_queue = vkb_device.get_queue(vkb::QueueType::graphics).value();
@@ -155,18 +227,6 @@ int main(int argc, char **argv) {
             terminate();
         }
     }
-
-    // Initialize VMA
-    VmaAllocatorCreateInfo allocatorInfo {};
-    allocatorInfo.physicalDevice = vk_physical_device;
-    allocatorInfo.device = vk_device;
-    allocatorInfo.instance = vk_instance;
-    allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
-    vmaCreateAllocator(&allocatorInfo, &vma_allocator);
-
-    main_deletion_queue.push_function([=]() {
-        vmaDestroyAllocator(vma_allocator);
-    });
 
     bool running = true;
     while (running) {
@@ -352,6 +412,44 @@ int main(int argc, char **argv) {
     SDL_Quit();    
 
     return 0;
+}
+
+void vma_log_error(VkResult result) {
+    switch (result) {
+        case VK_ERROR_OUT_OF_HOST_MEMORY:
+            std::cerr << "Failed to create image: Out of host memory." << std::endl;
+            break;
+        case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+            std::cerr << "Failed to create image: Out of device memory." << std::endl;
+            break;
+        case VK_ERROR_INITIALIZATION_FAILED:
+            std::cerr << "Failed to create image: Initialization failed." << std::endl;
+            break;
+        case VK_ERROR_MEMORY_MAP_FAILED:
+            std::cerr << "Failed to create image: Memory map failed." << std::endl;
+            break;
+        case VK_ERROR_LAYER_NOT_PRESENT:
+            std::cerr << "Failed to create image: Layer not present." << std::endl;
+            break;
+        case VK_ERROR_EXTENSION_NOT_PRESENT:
+            std::cerr << "Failed to create image: Extension not present." << std::endl;
+            break;
+        case VK_ERROR_FEATURE_NOT_PRESENT:
+            std::cerr << "Failed to create image: Feature not present." << std::endl;
+            break;
+        case VK_ERROR_TOO_MANY_OBJECTS:
+            std::cerr << "Failed to create image: Too many objects." << std::endl;
+            break;
+        case VK_ERROR_FORMAT_NOT_SUPPORTED:
+            std::cerr << "Failed to create image: Format not supported." << std::endl;
+            break;
+        case VK_ERROR_FRAGMENTED_POOL:
+            std::cerr << "Failed to create image: Fragmented pool." << std::endl;
+            break;
+        default:
+            std::cerr << "Failed to create image: Unknown error." << std::endl;
+            break;
+    }
 }
 
 VkSemaphoreSubmitInfo semaphore_submit_info(VkPipelineStageFlags2 stageMask, VkSemaphore semaphore) {

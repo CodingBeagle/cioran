@@ -12,6 +12,7 @@
 #include "SDL3/SDL.h"
 #include "SDL3/SDL_vulkan.h"
 
+// VMA
 #include "vk_mem_alloc.h"
 
 namespace cioran {
