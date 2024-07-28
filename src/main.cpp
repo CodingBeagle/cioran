@@ -16,6 +16,7 @@
 
 // Cioran
 #include "cioran-vulkan.h"
+#include "cioran-images.h"
 
 // Function prototypes
 VkFenceCreateInfo fence_create_info(VkFenceCreateFlags flags);
@@ -66,7 +67,7 @@ cioran::VkDeletionQueue main_deletion_queue;
 VmaAllocator vma_allocator;
 
 cioran::AllocatedImage draw_image;
-VkExtent2D draw_extent;
+VkExtent2D draw_extent {};
 
 int window_height = 600;
 int window_width = 800;
@@ -278,6 +279,9 @@ int main(int argc, char **argv) {
 
         VkCommandBuffer cmd = get_current_frame().command_buffer;
 
+        draw_extent.width = draw_image.image_extent.width;
+        draw_extent.height = draw_image.image_extent.height;
+
         // Now that we are sure that the commands finished executing, we can safely
         // reset the command buffer to begin recording again.
         // Resetting the buffer will completely remove all commands and free its memory.
@@ -301,7 +305,9 @@ int main(int argc, char **argv) {
         // The new layout is VK_IMAGE_LAYOUT_GENERAL.
         // This is a general purpose layout which allows for reading and writing from the image.
         // It's not the most optimal layout for rendering, but it's a good starting point.
-        transition_image(cmd, vk_swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        //transition_image(cmd, vk_swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+        transition_image(cmd, draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
         // Make a clear color from frame number.
         // This will flash!
@@ -312,11 +318,20 @@ int main(int argc, char **argv) {
         VkImageSubresourceRange subresourceRange = image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
 
         // Clear image
-        vkCmdClearColorImage(cmd, vk_swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &subresourceRange);
+        vkCmdClearColorImage(cmd, draw_image.image, VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &subresourceRange);
 
         // Make the swapchain image into presentable mode
         // The swapchain only allows layouts in the form of VK_IMAGE_LAYOUT_PRESENT_SRC_KHR for presenting to the screen.
-        transition_image(cmd, vk_swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        //transition_image(cmd, vk_swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+        transition_image(cmd, draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_image(cmd, vk_swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        // Execute a copy from the draw image into the swapchain
+        cioran::copy_image_to_image(cmd, draw_image.image, vk_swapchain_images[swapchain_image_index], draw_extent, vk_swapchain_extent);
+        
+        // set swapchain image layout to present so we can show it on the screen
+        transition_image(cmd, vk_swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
         // Finalize the command buffer (we can no longer add commands, but it can now be executed)
         if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
