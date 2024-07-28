@@ -1,0 +1,34 @@
+// GLSL version to use
+#version 460
+
+// Size of a workgroup for compute
+// Compute shaders are executed in workgroups, which can be defined in 1D, 2D, or 3D.
+// A workgroup is essentially a set of invocations that are done in parallel, and data can be shared between each invocation.
+// By specying a local size of 16x16, we are defining a workgroup of 16x16 lanes of thread.
+layout (local_size_x = 16, local_size_y = 16) in;
+
+// Descriptor bindings for the pipeline
+// This is our shader input.
+// We are defining a SET 0, which has a single binding 0, which binds a 2D image.
+// A set in Vulkan can have multiple bindings within it.
+// This is basically SET 1, at index 0, which contains a 2D image binding at #0.
+layout(rgba16f,set = 0, binding = 0) uniform image2D image;
+
+void main()
+{
+    ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(image);
+
+    if (texelCoord.x < size.x && texelCoord.y < size.y)
+    {
+        vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
+
+        if (gl_LocalInvocationID.x != 0 && gl_LocalInvocationID.y != 0)
+        {
+            color.x = float(texelCoord.x) / size.x;
+            color.y = float(texelCoord.y) / size.y;
+        }
+
+        imageStore(image, texelCoord, color);
+    }
+}
