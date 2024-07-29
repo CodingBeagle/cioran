@@ -4,6 +4,9 @@
 
 namespace cioran {
     void DescriptorLayoutBuilder::add_binding(uint32_t binding, VkDescriptorType type) {
+        // VkDescriptorSetLayoutBinding describes the binding index for a shader stage,
+        // And the descriptor type that is bound to that index.
+        // DescriptorCount is the number of descriptors contained in the binding.
         VkDescriptorSetLayoutBinding new_bind {};
         new_bind.binding = binding;
         new_bind.descriptorType = type;
@@ -37,8 +40,12 @@ namespace cioran {
         return descriptor_set_layout;
     }
 
+    // VkDescriptorPools are used to allocate descriptor sets, and the pool owns the storage
+    // For the descriptor sets.
     void DescriptorAllocator::init_pool(VkDevice device, uint32_t max_sets, std::span<PoolSizeRatio> pool_ratios)
     {
+        // A VkDescriptorPoolSize is used to specify a specific type of descriptor,
+        // and the number of descriptors of that type that a pool should be able to allocate.
         std::vector<VkDescriptorPoolSize> pool_sizes;
         for (PoolSizeRatio ratio : pool_ratios) {
             VkDescriptorPoolSize pool_size {};
@@ -47,10 +54,13 @@ namespace cioran {
             pool_sizes.push_back(pool_size);
         }
 
+        // VkDescriptorPoolCreateInfo is used to create a descriptor pool.
         VkDescriptorPoolCreateInfo pool_info {};
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_info.flags = 0;
+        // The maximum number of descriptor sets that can be allocated from the pool.
         pool_info.maxSets = max_sets;
+        // Provide the descriptor pool sizes.
         pool_info.poolSizeCount = (uint32_t)pool_sizes.size();
         pool_info.pPoolSizes = pool_sizes.data();
 
@@ -68,6 +78,8 @@ namespace cioran {
         alloc_info.descriptorSetCount = 1;
         alloc_info.pSetLayouts = &layout;
 
+        // A VkDescriptorSet is an object that holds a collection of descriptors,
+        // Which are used to link shader resources to the shaders in a Vulkan pipeline
         VkDescriptorSet descriptor_set; 
         if (vkAllocateDescriptorSets(device, &alloc_info, &descriptor_set) != VK_SUCCESS) {
             std::cerr << "Failed to allocate descriptor set" << std::endl;

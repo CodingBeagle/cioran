@@ -17,6 +17,7 @@
 // Cioran
 #include "cioran-vulkan.h"
 #include "cioran-images.h"
+#include "cioran-descriptors.h"
 
 // Function prototypes
 VkFenceCreateInfo fence_create_info(VkFenceCreateFlags flags);
@@ -28,6 +29,7 @@ VkSemaphoreSubmitInfo semaphore_submit_info(VkPipelineStageFlags2 stageMask, VkS
 VkCommandBufferSubmitInfo command_buffer_submit_info(VkCommandBuffer cmd);
 VkSubmitInfo2 submit_info(VkCommandBufferSubmitInfo* cmd, VkSemaphoreSubmitInfo* signalSemaphoreInfo, VkSemaphoreSubmitInfo* waitSemaphoreInfo);
 void vma_log_error(VkResult result);
+void init_descriptors();
 
 struct FrameData {
     VkCommandPool command_pool;
@@ -68,6 +70,11 @@ VmaAllocator vma_allocator;
 
 cioran::AllocatedImage draw_image;
 VkExtent2D draw_extent {};
+
+// Descriptor-Related Members
+cioran::DescriptorAllocator global_descriptor_allocator {};
+VkDescriptorSet draw_image_descriptors {};
+VkDescriptorSetLayout draw_image_descriptor_layout {};
 
 int window_height = 600;
 int window_width = 800;
@@ -229,6 +236,9 @@ int main(int argc, char **argv) {
             terminate();
         }
     }
+
+    // Initialize descriptors
+    init_descriptors();
 
     bool running = true;
     while (running) {
@@ -578,4 +588,51 @@ VkSemaphoreCreateInfo semaphore_create_info(VkSemaphoreCreateFlags flags) {
     semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     semaphoreCreateInfo.flags = flags;
     return semaphoreCreateInfo;
+}
+
+void init_descriptors() {
+    // Create a descriptor pool that will hold 10 sets with 1 image each
+    std::vector<cioran::DescriptorAllocator::PoolSizeRatio> poolSizes = {
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 }
+    };
+
+    // The flow for descriptor sets are
+    // 1. Create a descriptor Set Pool
+    // 2. Create Descriptor Layout bindings, which describe a binding index for a shader stage,
+    // And the type of descriptor that is bound to it.
+    // 3. Build a descriptor set layout from those layout bindings
+    // 4. Allocate a descriptor set from the pool using the descriptor set layout
+    global_descriptor_allocator.init_pool(vk_device, 10, poolSizes);
+
+    // Make the descriptor set layout for our compute draw
+    {
+        cioran::DescriptorLayoutBuilder layoutBuilder {};
+        layoutBuilder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        draw_image_descriptor_layout = layoutBuilder.build(vk_device, VK_SHADER_STAGE_COMPUTE_BIT);
+    }
+
+    draw_image_descriptors = global_descriptor_allocator.allocate(vk_device, draw_image_descriptor_layout);
+
+    VkDescriptorImageInfo imageInfo {};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imageInfo.imageView = draw_image.image_view;
+
+    VkWriteDescriptorSet draw_image_write {};
+    draw_image_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    draw_image_write.pNext = nullptr;
+
+    draw_image_write.dstBinding = 0;
+    draw_image_write.dstSet = draw_image_descriptors;
+    draw_image_write.descriptorCount = 1;
+    draw_image_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    draw_image_write.pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(vk_device, 1, &draw_image_write, 0, nullptr);
+
+    // Make sure both the descriptor allocator and the new layout get cleaned up properly
+    main_deletion_queue.push_function([=]() {
+        global_descriptor_allocator.destroy_pool(vk_device);
+
+        vkDestroyDescriptorSetLayout(vk_device, draw_image_descriptor_layout, nullptr);
+    });
 }
