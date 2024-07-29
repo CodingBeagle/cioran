@@ -68,7 +68,7 @@ cioran::VkDeletionQueue main_deletion_queue;
 
 VmaAllocator vma_allocator;
 
-cioran::AllocatedImage draw_image;
+cioran::AllocatedImage draw_image {};
 VkExtent2D draw_extent {};
 
 // Descriptor-Related Members
