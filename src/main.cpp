@@ -2,7 +2,7 @@
 #include <vector>
 
 // Vulkan
-#include <vulkan/vulkan.h>
+#include <vulkan/vulkan.hpp>
 #include "vkbootstrap/VkBootstrap.h"
 
 // VMA
@@ -129,6 +129,7 @@ int main(int argc, char **argv) {
     }
 
     main_deletion_queue.push_function([=]() {
+        std::cout << "Destroying allocator!" << std::endl;
         vmaDestroyAllocator(vma_allocator);
     });
 
@@ -193,6 +194,7 @@ int main(int argc, char **argv) {
 
     // Add image resources to deletion queue
     main_deletion_queue.push_function([=]() {
+        std::cout << "Destroying draw image resources!" << std::endl;
         vkDestroyImageView(vk_device, draw_image.image_view, nullptr);
         vmaDestroyImage(vma_allocator, draw_image.image, draw_image.allocation);
     });
@@ -605,11 +607,10 @@ void init_descriptors() {
     global_descriptor_allocator.init_pool(vk_device, 10, poolSizes);
 
     // Make the descriptor set layout for our compute draw
-    {
-        cioran::DescriptorLayoutBuilder layoutBuilder {};
-        layoutBuilder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-        draw_image_descriptor_layout = layoutBuilder.build(vk_device, VK_SHADER_STAGE_COMPUTE_BIT);
-    }
+    
+    cioran::DescriptorLayoutBuilder layoutBuilder;
+    layoutBuilder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+    draw_image_descriptor_layout = layoutBuilder.build(vk_device, VK_SHADER_STAGE_COMPUTE_BIT);
 
     draw_image_descriptors = global_descriptor_allocator.allocate(vk_device, draw_image_descriptor_layout);
 
@@ -617,9 +618,10 @@ void init_descriptors() {
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     imageInfo.imageView = draw_image.image_view;
 
-    VkWriteDescriptorSet draw_image_write {};
+    VkWriteDescriptorSet draw_image_write = {};
     draw_image_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     draw_image_write.pNext = nullptr;
+    draw_image_write.pTexelBufferView = nullptr;
 
     draw_image_write.dstBinding = 0;
     draw_image_write.dstSet = draw_image_descriptors;
@@ -631,6 +633,8 @@ void init_descriptors() {
 
     // Make sure both the descriptor allocator and the new layout get cleaned up properly
     main_deletion_queue.push_function([=]() {
+        std::cout << "Cleaning up descriptors!" << std::endl;
+
         global_descriptor_allocator.destroy_pool(vk_device);
 
         vkDestroyDescriptorSetLayout(vk_device, draw_image_descriptor_layout, nullptr);
